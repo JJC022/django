@@ -37,6 +37,8 @@ class BackgammonEnv:
         self.game_state = GameState()
         self.selected_point = None
         self.highlighted_moves = []
+        self.remaining_dice = []
+        self.current_turn_moves = []
         
         # Pygame setup
         if render_mode == "human":
@@ -102,6 +104,8 @@ class BackgammonEnv:
         self.game_state.reset()
         self.selected_point = None
         self.highlighted_moves = []
+        self.remaining_dice = []
+        self.current_turn_moves = []
         return self._get_observation()
         
     def step(self, action: List[Move]) -> Tuple[np.ndarray, float, bool, Dict[str, Any]]:
@@ -154,13 +158,54 @@ class BackgammonEnv:
                 
         return 0.0  # Neutral for ongoing game
         
+    def start_new_turn(self):
+        """Start a new turn by rolling dice and setting up remaining dice."""
+        self.game_state.roll_dice()
+        self.remaining_dice = self.game_state.get_available_dice_values()
+        self.current_turn_moves = []
+        self.selected_point = None
+        self.highlighted_moves = []
+        
     def get_legal_actions(self) -> List[List[Move]]:
         """Get all legal move sequences for the current player."""
-        if not self.game_state.dice or self.game_state.dice == (0, 0):
-            self.game_state.roll_dice()
+        if not self.remaining_dice:
+            self.start_new_turn()
             
-        dice_values = self.game_state.get_available_dice_values()
-        return self.game_state.generate_legal_moves(self.game_state.current_player, dice_values)
+        return self.game_state.generate_legal_moves(self.game_state.current_player, self.remaining_dice)
+        
+    def get_legal_single_moves(self) -> List[Move]:
+        """Get legal single moves for the current dice state."""
+        if not self.remaining_dice:
+            return []
+            
+        legal_moves = []
+        for die_value in set(self.remaining_dice):  # Use set to avoid duplicates
+            # Try each point as source
+            for from_point in range(28):  # Include bar and home
+                if not self.game_state.board.can_move_from(from_point, self.game_state.current_player):
+                    continue
+                    
+                # Calculate destination based on player direction
+                if self.game_state.current_player == Player.WHITE:
+                    # White moves from low to high points (1→24)
+                    to_point = from_point + die_value
+                else:
+                    # Black moves from high to low points (24→1)
+                    to_point = from_point - die_value
+                
+                # Handle bearing off
+                if self.game_state.board.all_checkers_in_home_board(self.game_state.current_player):
+                    if (self.game_state.current_player == Player.WHITE and from_point >= 18 and to_point >= 24) or \
+                       (self.game_state.current_player == Player.BLACK and from_point <= 5 and to_point < 0):
+                        to_point = 26 if self.game_state.current_player == Player.WHITE else 27
+                        
+                # Check if move is legal
+                if (0 <= to_point <= 23 and self.game_state.board.can_move_to(to_point, self.game_state.current_player)) or \
+                   to_point in [26, 27]:
+                    move = Move(from_point, to_point, die_value)
+                    legal_moves.append(move)
+                    
+        return legal_moves
         
     def render(self, mode: str = None):
         """Render the current game state."""
@@ -287,23 +332,143 @@ class BackgammonEnv:
                                      
     def _draw_ui(self):
         """Draw UI elements like dice, current player, etc."""
-        # Current player
-        player_text = f"Current Player: {'White' if self.game_state.current_player == Player.WHITE else 'Black'}"
-        text = self.font.render(player_text, True, self.BLACK)
-        self.screen.blit(text, (10, 10))
+        # Current player with color indicator
+        player_name = 'White' if self.game_state.current_player == Player.WHITE else 'Black'
+        player_color = self.WHITE if self.game_state.current_player == Player.WHITE else self.BLACK
         
-        # Dice
+        # Draw player indicator box
+        pygame.draw.rect(self.screen, player_color, (10, 10, 30, 20))
+        pygame.draw.rect(self.screen, self.BLACK, (10, 10, 30, 20), 2)
+        
+        player_text = f"Current Player: {player_name}"
+        text = self.font.render(player_text, True, self.BLACK)
+        self.screen.blit(text, (50, 10))
+        
+        # Dice with visual dice representation
         if self.game_state.dice != (0, 0):
             dice_text = f"Dice: {self.game_state.dice[0]}, {self.game_state.dice[1]}"
             text = self.font.render(dice_text, True, self.BLACK)
             self.screen.blit(text, (10, 40))
             
+            # Show remaining dice
+            if self.remaining_dice:
+                remaining_text = f"Remaining: {self.remaining_dice}"
+                text = self.small_font.render(remaining_text, True, self.BLUE)
+                self.screen.blit(text, (10, 65))
+            
+            # Draw visual dice (highlight used ones)
+            dice_values = self.game_state.get_available_dice_values()
+            dice_x_start = 200
+            for i, die_value in enumerate(dice_values):
+                dice_x = dice_x_start + i * 35
+                dice_y = 40
+                
+                # Check if this die is still available
+                is_available = die_value in self.remaining_dice
+                self._draw_die(dice_x, dice_y, die_value, available=is_available)
+        
+        # Selected piece information
+        if self.selected_point is not None:
+            selected_text = f"Selected: Point {self.selected_point + 1}"
+            if self.selected_point == 24:
+                selected_text = "Selected: White Bar"
+            elif self.selected_point == 25:
+                selected_text = "Selected: Black Bar"
+            elif self.selected_point >= 26:
+                selected_text = "Selected: Home"
+                
+            text = self.font.render(selected_text, True, self.BLUE)
+            self.screen.blit(text, (10, 70))
+            
+            # Show number of possible moves
+            if self.highlighted_moves:
+                moves_text = f"Possible moves: {len(self.highlighted_moves)}"
+                text = self.small_font.render(moves_text, True, self.BLUE)
+                self.screen.blit(text, (10, 95))
+        
+        # Instructions
+        if not self.game_state.game_over:
+            if not self.remaining_dice:
+                instruction = "Press SPACE to roll dice for new turn"
+            elif self.selected_point is None:
+                instruction = "Click on a checker to select it"
+            else:
+                instruction = "Click on destination to move"
+            
+            text = self.small_font.render(instruction, True, self.GRAY)
+            self.screen.blit(text, (10, self.height - 30))
+            
+            # Show turn status
+            if self.remaining_dice:
+                turn_status = f"Turn in progress - {len(self.remaining_dice)} dice remaining"
+            else:
+                turn_status = f"Turn complete - press SPACE for next player"
+            
+            status_text = self.small_font.render(turn_status, True, self.BLUE)
+            self.screen.blit(status_text, (10, self.height - 50))
+        
         # Game status
         if self.game_state.game_over:
             winner_text = f"Winner: {'White' if self.game_state.winner == Player.WHITE else 'Black'}"
             text = self.font.render(winner_text, True, self.RED)
             text_rect = text.get_rect(center=(self.width//2, 70))
+            
+            # Draw background for winner text
+            bg_rect = text_rect.inflate(20, 10)
+            pygame.draw.rect(self.screen, self.WHITE, bg_rect)
+            pygame.draw.rect(self.screen, self.RED, bg_rect, 3)
             self.screen.blit(text, text_rect)
+            
+        # Highlight bearing off areas if applicable
+        if self.selected_point is not None:
+            player = self.game_state.current_player
+            if self.game_state.board.all_checkers_in_home_board(player):
+                home_point = 26 if player == Player.WHITE else 27
+                if home_point in self.point_positions:
+                    x, y, w, h = self.point_positions[home_point]
+                    pygame.draw.rect(self.screen, self.GREEN, (x, y, w, h), 4)
+                    
+                    # Add "BEAR OFF" text
+                    bear_text = self.small_font.render("BEAR OFF", True, self.GREEN)
+                    text_rect = bear_text.get_rect(center=(x + w//2, y + h//2))
+                    self.screen.blit(bear_text, text_rect)
+    
+    def _draw_die(self, x: int, y: int, value: int, available: bool = True):
+        """Draw a visual representation of a die."""
+        die_size = 25
+        
+        # Draw die background - different colors for available vs used
+        die_rect = pygame.Rect(x, y, die_size, die_size)
+        if available:
+            bg_color = self.WHITE
+            border_color = self.BLACK
+            dot_color = self.BLACK
+        else:
+            bg_color = self.GRAY
+            border_color = self.BLACK
+            dot_color = self.WHITE
+            
+        pygame.draw.rect(self.screen, bg_color, die_rect)
+        pygame.draw.rect(self.screen, border_color, die_rect, 2)
+        
+        # Draw dots based on value
+        dot_radius = 3
+        center_x, center_y = x + die_size // 2, y + die_size // 2
+        
+        # Dot positions relative to center
+        positions = {
+            1: [(0, 0)],
+            2: [(-6, -6), (6, 6)],
+            3: [(-6, -6), (0, 0), (6, 6)],
+            4: [(-6, -6), (6, -6), (-6, 6), (6, 6)],
+            5: [(-6, -6), (6, -6), (0, 0), (-6, 6), (6, 6)],
+            6: [(-6, -6), (6, -6), (-6, 0), (6, 0), (-6, 6), (6, 6)]
+        }
+        
+        if value in positions:
+            for dx, dy in positions[value]:
+                pygame.draw.circle(self.screen, dot_color, 
+                                 (center_x + dx, center_y + dy), dot_radius)
             
     def _render_rgb_array(self) -> np.ndarray:
         """Render as RGB array for headless operation."""
@@ -329,9 +494,15 @@ class BackgammonEnv:
                     return True
             else:
                 # Try to move to clicked point
-                if self._try_move(self.selected_point, clicked_point):
+                move_made = self._try_single_move(self.selected_point, clicked_point)
+                if move_made:
                     self.selected_point = None
                     self.highlighted_moves = []
+                    
+                    # Check if turn is complete (no more dice or no legal moves)
+                    if not self.remaining_dice or not self.get_legal_single_moves():
+                        self._end_turn()
+                    
                     return True
                 else:
                     # Select new point or deselect
@@ -358,11 +529,16 @@ class BackgammonEnv:
     def _highlight_possible_moves(self, from_point: int):
         """Highlight possible moves from selected point."""
         self.highlighted_moves = []
-        dice_values = self.game_state.get_available_dice_values()
         
-        for die_value in dice_values:
-            direction = 1 if self.game_state.current_player == Player.WHITE else -1
-            to_point = from_point + die_value * direction
+        # Use remaining dice instead of all dice
+        for die_value in set(self.remaining_dice):
+            # Calculate destination based on player direction
+            if self.game_state.current_player == Player.WHITE:
+                # White moves from low to high points (1→24)
+                to_point = from_point + die_value
+            else:
+                # Black moves from high to low points (24→1)
+                to_point = from_point - die_value
             
             # Check bearing off
             if self.game_state.board.all_checkers_in_home_board(self.game_state.current_player):
@@ -374,25 +550,68 @@ class BackgammonEnv:
                to_point in [26, 27]:
                 self.highlighted_moves.append(to_point)
                 
-    def _try_move(self, from_point: int, to_point: int) -> bool:
-        """Try to make a move between two points."""
-        dice_values = self.game_state.get_available_dice_values()
-        direction = 1 if self.game_state.current_player == Player.WHITE else -1
-        
-        # Calculate required die value
+    def _try_single_move(self, from_point: int, to_point: int) -> bool:
+        """Try to make a single move between two points."""
+        # Calculate required die value based on move direction
         if to_point in [26, 27]:  # Bearing off
             if self.game_state.current_player == Player.WHITE:
+                # White bearing off from home board (points 18-23)
                 die_value = max(1, 24 - from_point)
             else:
+                # Black bearing off from home board (points 0-5)
                 die_value = max(1, from_point + 1)
         else:
-            die_value = abs(to_point - from_point)
+            # Regular move - calculate die value based on direction
+            if self.game_state.current_player == Player.WHITE:
+                # White moves forward (increasing point numbers)
+                die_value = to_point - from_point
+            else:
+                # Black moves backward (decreasing point numbers)
+                die_value = from_point - to_point
             
-        if die_value in dice_values:
-            move = Move(from_point, to_point, die_value)
-            return self.game_state.make_move_sequence([move])
+        # Check if this die value is available
+        if die_value in self.remaining_dice:
+            # Make the move
+            if self.game_state.board.move_checker(from_point, to_point, self.game_state.current_player):
+                # Remove the used die from remaining dice
+                self.remaining_dice.remove(die_value)
+                
+                # Record the move
+                move = Move(from_point, to_point, die_value)
+                self.current_turn_moves.append(move)
+                
+                # Check for game over
+                if self.game_state.board.is_game_over():
+                    self.game_state.game_over = True
+                    self.game_state.winner = self.game_state.board.get_winner()
+                
+                return True
             
         return False
+        
+    def _end_turn(self):
+        """End the current turn and switch players."""
+        # Record the complete turn in history
+        if self.current_turn_moves:
+            from .game_state import Turn
+            turn = Turn(self.current_turn_moves, self.game_state.dice, self.game_state.current_player)
+            self.game_state.turn_history.append(turn)
+        
+        # Switch players
+        if not self.game_state.game_over:
+            self.game_state.current_player = (
+                Player.BLACK if self.game_state.current_player == Player.WHITE else Player.WHITE
+            )
+        
+        # Reset turn state
+        self.remaining_dice = []
+        self.current_turn_moves = []
+        self.selected_point = None
+        self.highlighted_moves = []
+        
+    def _try_move(self, from_point: int, to_point: int) -> bool:
+        """Try to make a move between two points (legacy method for compatibility)."""
+        return self._try_single_move(from_point, to_point)
         
     def close(self):
         """Close the environment."""

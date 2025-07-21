@@ -57,8 +57,13 @@ def interactive_test():
                     running = False
                 elif event.key == pygame.K_SPACE:
                     if not env.game_state.game_over:
-                        env.game_state.roll_dice()
-                        print(f"Rolled: {env.game_state.dice}")
+                        # Use the environment's dice management system
+                        if not env.remaining_dice:
+                            env.start_new_turn()
+                            print(f"Rolled: {env.game_state.dice}")
+                            print(f"Available dice: {env.remaining_dice}")
+                        else:
+                            print(f"Still have remaining dice: {env.remaining_dice}")
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if event.button == 1:  # Left click
                     env.handle_click(event.pos)
