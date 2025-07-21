@@ -1,0 +1,37 @@
+# TD-Gammon style training configuration
+
+agent:
+  type: "TDAgent"
+  name: "TD-Gammon"
+  learning_rate: 0.001
+  epsilon: 0.1
+  epsilon_decay: 0.995
+  epsilon_min: 0.01
+  lambda_param: 0.9
+  network:
+    hidden_sizes: [200, 200]
+    dropout: 0.1
+
+training:
+  type: "self_play"
+  num_games: 10000
+  eval_interval: 500
+  save_interval: 1000
+  opponent_pool_size: 5
+  update_pool_interval: 200
+
+environment:
+  render_mode: null
+  width: 1200
+  height: 800
+
+logging:
+  log_level: "INFO"
+  save_plots: true
+  plot_interval: 1000
+  tensorboard: true
+
+paths:
+  models_dir: "models"
+  logs_dir: "logs"
+  plots_dir: "plots"

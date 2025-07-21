@@ -1,0 +1,27 @@
+# Tournament configuration for backgammon agents
+
+tournament:
+  games_per_match: 100
+  save_results: true
+  create_plots: true
+
+agents:
+  - type: "RandomAgent"
+    name: "Random"
+    
+  - type: "TDAgent"
+    name: "TD-Baseline"
+    learning_rate: 0.001
+    lambda_param: 0.9
+    # model_path: "models/td_baseline.pth"  # Uncomment when model exists
+    
+  - type: "TDAgent"
+    name: "TD-Advanced"
+    learning_rate: 0.0005
+    lambda_param: 0.95
+    # model_path: "models/td_advanced.pth"  # Uncomment when model exists
+
+output:
+  directory: "tournament_results"
+  save_detailed_logs: true
+  create_visualizations: true
